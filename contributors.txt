@@ -1,0 +1,5 @@
+Original design and creator:
+日下　義政<y-kusaka@h02.itscom.net>
+
+Documentation and Maintainer:
+福田　卓也<kitahei88@yahoo.co.jp>

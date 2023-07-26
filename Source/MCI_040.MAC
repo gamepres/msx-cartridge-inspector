@@ -1,0 +1,3509 @@
+;
+;	MSX-Cartridge Inspector	ver 0.01	2020/11/22 開発開始
+;				ver 1.00	2020/12/13
+;				ver 1.01	2020/12/19
+;				ver 1.02	2020/12/19
+;				ver 1.03	2020/12/20
+;				ver 1.04	2020/12/27
+;				ver 1.05	2020/12/27
+;				ver 1.06	2020/12/30
+;				ver 1.07	2020/12/31
+;				ver 1.08	2021/01/09
+;				ver 1.09	2021/01/16
+;				ver 1.10	2021/01/23
+;				ver 1.11	2021/01/31
+;				ver 1.12	2021/02/01
+;				ver 1.13	2021/02/02
+;				ver 1.14	2021/02/02
+;				ver 1.15	2021/02/06
+;				ver 1.16	2021/02/11
+;				ver 1.17	2021/02/11
+;
+;	●既知のバグ
+;	・ページ3のROMを読まない
+;	・非メガROMの場合、既存ファイルがあるとフリーズしてしまう
+;
+;	●改定履歴
+;	ver 1.01
+;	8000Hから始まるROMが32KBセーブされてしまうバグを修正。
+;	INIファイルにバージョン表記を追加。
+;
+;	ver 1.02
+;	通常ROMが48KBセーブされてしまうバグを解消。
+;	「大仏パラダイス」がページ0からデータが見えてしまうため誤認するバグを修正。
+;	既存のROMファイルがある時にフリーズしてしまう（未修正）。
+;
+;	ver 1.03
+;	「シャロム」にSRAMがあると誤認識するバグを修正。
+;
+;	ver 1.04
+;	「ソリッドスネーク」の最終バンクを読めない問題を修正。
+;	8000-9FFFHに3FHを出すよう9000Hに書き込んでいたが、同時に9800-9FFFHに
+;	SCCが出てしまい、ROMが読めなくなっていた。使用するアドレスをA000-BFFFHに
+;	変更した。
+;
+;	ver 1.05
+;	「コナミの新１０倍カートリッジ」のSRAMセーブに対応。
+;
+;	ver 1.06
+;	「R-TYPE」に対応。ただしまだ全データは吸えない。
+;
+;	ver 1.07
+;	「R-TYPE」の判別とROMデータ吸い出しに対応。サイズは強制的に4Mbitとする。
+;
+;	ver 1.08
+;	「蒼き狼と白き雌鹿・元朝秘史」で、32K(8Kx4)のSRAMを16K(8Kx2)と誤認するバグを修正。
+;
+;	ver 1.09
+;	「日本語MSX-DOS2」（RAMなし）で、バンク冒頭255バイトが同一のためメガROMと
+;	判定されないバグを修正。
+;
+;	ver 1.10
+;	「ZANAC」(MSX2版）をR-TYPEと誤認するバグを修正。
+;	「迷宮への扉（GATE OF LABYRINTH）」を16kバンクのところを8kバンクと
+;	誤認するバグを修正。
+;
+;	ver 1.11
+;	「はーりぃふぉっくす雪の魔王編」のバンクに対応。
+;	ROMイメージはセーブできるが、DOSに戻れないバグあり。
+;
+;	ver 1.12
+;	ページ3（TPA）が不足してきたので、ページ0に各種サブルーチンを移す。
+;	「はーりぃふぉっくす雪の魔王編」のセーブ後に戻らなくなるバグも直る。
+;
+;	ver 1.13
+;	非メガROMの判定時（ページ0内のデータの有無）に暴走する対策をする。
+;
+;	ver 1.14
+;	「クロスブレイム」対応。
+;	判別はするが、まだイメージのセーブはしていない。INFファイルだけ作る。
+;
+;	ver 1.15
+;	「クロスブレイム」のセーブ対応。
+;
+;	ver 1.16
+;	「イーグルファイター」の前半部分をセーブしないバグに対応。
+;
+;	ver 1.17
+;	「HALNOTE」のセーブに対応。ただしSRAMは発見できない。
+;
+;
+	.Z80
+	ASEG
+;
+SOFTVER	MACRO
+	DB	'1.17'	;soft version
+	ENDM
+
+EXPTBL	EQU	0FCC1H	;MAIN-ROM SLOT
+EXBRSA	EQU	0FAF8H	;SUB-ROM SLOT
+;
+;
+PG0RAM	EQU	0F341H	;RAM SLOT(page0)
+PG1RAM	EQU	0F342H	;RAM SLOT(page1)
+PG2RAM	EQU	0F343H	;RAM SLOT(page2)
+;
+CALSLT	EQU	0001CH	;INTER-SLOT CALL
+ENASLT	EQU	00024H	;SLOT CHANGE
+;
+MSXDOS	EQU	00005H
+;
+WARM_BOOT	EQU	0001H
+;
+SIX_SHIFT	EQU	64*256	;6bit-left-shift(page number)
+;
+KNM_BANKREG1	EQU	08000H	;no-SCC KONAMI bank register
+SCC_BANKREG1	EQU	05000H	;SCC KONAMI bank register
+ASC_BANKREG1	EQU	07000H	;ASCII bank register
+;
+;***ROM TYPE
+NORMAL_ROM	EQU	0
+NON_SCC_ROM	EQU	1
+SCC_ROM		EQU	2
+ASCII8K_ROM	EQU	3
+ASCII16K_ROM	EQU	4
+ETC_ROM		EQU	5
+SHIN10_ROM	EQU	6
+RTYPE_ROM	EQU	7
+HURRYFOX_ROM	EQU	8
+CROSSBLAIM_ROM	EQU	9
+HALNOTE_ROM	EQU	10
+NOT_EXIST	EQU	0FFH
+;
+;***SRAM TYPE
+NO_SRAM		EQU	0
+S1K_SRAM	EQU	1
+S2K_SRAM	EQU	2
+S4K_SRAM	EQU	3
+S8K_SRAM	EQU	4
+S16K_SRAM	EQU	5
+SHIN10_SRAM	EQU	6
+;
+;
+PAGE1_START	EQU	04000H
+PAGE2_START	EQU	08000H
+PAGE3_START	EQU	0C000H
+;
+COMP_BYTES	EQU	300	;バンク違いチェック量
+				;日本語MSX-DOS2（RAM無）対応には256以上必要
+;
+;
+CR	EQU	0DH
+LF	EQU	0AH
+EOF	EQU	'$'
+
+
+;***FCB BLOCK DEFINITION
+FCB1		EQU	0005CH
+COM_LENGTH	EQU	00080H
+COM_LETTER	EQU	00081H
+;
+;
+;
+	ORG	0100H
+;
+	PUBLIC	START
+;
+START:	JP	MAIN
+;
+;
+MES0:		DB	CR,' MSX-Cartridge Inspector ver '
+		SOFTVER
+		DB	CR,LF
+		DB	   '	(C) 2020-2021 KUSAKA Yoshimasa(GPS)',CR,LF,CR,LF,EOF
+
+MES1:		DB	CR,' Usage : MCI Output_Filename [/D]',CR,LF,EOF
+
+MES8_TXT:	DB	CR,LF,' *** File access error !',CR,LF,EOF
+MES8_1_TXT:		DB	CR,LF,' *** File Open error !',CR,LF,EOF
+MES8_2_TXT:		DB	CR,LF,' *** File Write error !',CR,LF,EOF
+MES8_3_TXT:		DB	' *** Same File Name exists. Aborted.',CR,LF,EOF
+
+;
+SRAM_FILE_FOOT:
+	DB	'SRM'
+INF_FILE_FOOT:
+	DB	'INF'
+;
+;
+MAIN:
+	LD	DE,MES0
+	LD	C,09H
+	CALL	MSXDOS
+;
+	CALL	COM_LINE_CHECK
+	JR	C,TO_END
+;*	CALL	FILE_OPEN	;ここではファイルを作らない
+;*	JR	C,TO_END
+;
+	JP	MAIN2
+;
+;
+TO_END:	LD	C,09H
+	CALL	MSXDOS
+;
+	RET			;exit to DOS
+;
+;
+COM_LINE_CHECK:
+	LD	A,(COM_LENGTH)
+	LD	B,A
+	LD	HL,COM_LETTER
+;
+COM_LINE_LOOP:
+	LD	A,(HL)
+	CP	'/'
+	JR	Z,FOUND_OPT
+;
+	INC	HL
+	DEC	B
+	JR	NZ,COM_LINE_LOOP
+;
+	JR	FILE_NAME_CHECK
+;
+
+FOUND_OPT:		;「/」を見つけた
+	INC	HL
+	DEC	B
+	JR	Z,FILE_NAME_CHECK
+;
+	LD	A,(HL)
+	CP	'd'
+	JR	Z,FOUND_DUMP_OPT
+	CP	'D'
+	JR	Z,FOUND_DUMP_OPT
+;
+	JR	FILE_NAME_CHECK		;not found
+;
+;
+FOUND_DUMP_OPT:
+	LD	A,1
+	LD	(OPTION_DUMP_FRG),A
+;
+	JR	FILE_NAME_CHECK
+;
+;
+FILE_NAME_CHECK:
+	LD	DE,MES1
+;
+	LD	A,(FCB1 + 1)	;output file name error
+	CP	' '
+	SCF
+	RET	Z
+;
+	LD	A,(FCB1 + 1)
+	CP	'-'
+	SCF
+	RET	Z
+;
+	OR	A
+	RET
+;
+OPTION_DUMP_FRG:
+	DS	1
+;
+;
+FILE_OPEN:
+;CF = 0 : no error
+;CF = 1 : file open error
+;DE : error message address
+;
+	LD	DE,FCB1
+	LD	C,011H		;file search
+	CALL	MSXDOS
+	INC	A
+	JP	Z,CHECK1
+;
+;	LD	DE,FCB1		;file erase
+;	LD	C,013H
+;	CALL	MSXDOS
+;	OR	A
+	SCF
+	LD	DE,MES8_3_TXT	;if same file name exists,abort
+	RET	NZ
+;
+CHECK1:	LD	DE,FCB1
+	LD	C,016H		;file create
+	CALL	MSXDOS
+	OR	A
+	SCF
+	LD	DE,MES8_TXT
+	RET	NZ
+;
+	LD	DE,FCB1
+	LD	C,0FH		;file open
+	CALL	MSXDOS
+	OR	A
+	SCF
+	LD	DE,MES8_TXT
+	RET	NZ
+;
+	LD	HL,1
+	LD	(FCB1+14),HL
+	DEC	L
+	LD	(FCB1+33),HL
+	LD	(FCB1+35),HL
+;
+	OR	A		;carry = 0
+	RET
+;
+;
+FILE_CLOSE:
+;A = 00H : close succeeded
+;A = FFH : close failed
+;
+	LD	DE,FCB1		;file close
+	LD	C,10H
+	CALL	MSXDOS
+;
+	XOR	A
+	RET
+;
+	LD	DE,MES8_TXT	;file close error
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,0FFH
+	RET
+;
+;
+;
+;***ここから先はページ3にあったが、メモリ不足によりページ0に移動した
+;
+;
+;*** SUB ROUTINES
+;
+;
+;save INF file to disk
+;CF = 0 : no error
+;CF = 1 : write error
+;
+PUT_INFO_FILE:
+	CALL	RETRAM
+;
+	LD	A,(ROM_TYPE)
+	CP	NORMAL_ROM
+	JP	Z,PUT_INFO_JP1	;normal-ROM
+;
+	DEC	A	;MEGA-ROM
+	LD	B,A
+	SLA	A	;A=A*16
+	SLA	A
+	SLA	A
+	SLA	A
+	SLA	B	;B=B*8
+	SLA	B
+	SLA	B
+	ADD	A,B	;A=A*24
+	LD	B,0
+	LD	C,A	;C=A*24
+;
+	LD	HL,ROM_TYP_TXT
+	ADD	HL,BC
+;
+	LD	DE,INF_BUF2
+	LD	BC,24
+	LDIR			;ROM type txt copy
+;
+;
+;
+;	*** MEGA-ROM banks
+;
+	LD	A,(ROM_FIRST_BANK)
+	CALL	TXT_8BIT_NUM
+	LD	HL,TXT8BIT_BUF
+	LD	DE,ROMBANK_NUM_TXT
+	LD	BC,2
+	LDIR
+;
+	LD	A,(ROM_LAST_BANK)
+	CALL	TXT_8BIT_NUM
+	LD	HL,TXT8BIT_BUF
+	LD	DE,ROMBANK_NUM_TXT+5
+	LD	BC,2
+	LDIR
+;
+;	*** S-RAM banks
+;
+	LD	A,(SRM_SIZ)
+	CP	NO_SRAM
+	JR	Z,PUT_INFO_JP2	;SRAM not exists
+;
+	CP	SHIN10_SRAM
+	JR	Z,PUT_INFO_JP2_1	;KONAMI SRAM
+;
+;	*** S-RAM exists
+;
+	LD	A,(SRAM_FIRST_BANK)
+	CALL	TXT_8BIT_NUM
+	LD	HL,TXT8BIT_BUF
+	LD	DE,SRAMBANK_NUM_TXT
+	LD	BC,2
+	LDIR
+;
+	LD	A,(SRAM_FIRST_BANK)
+	LD	B,A
+	LD	A,(SRAM_LAST_BANK)
+	SUB	B
+	JR	Z,PUT_INFO_JP3		;SRAM(1-bank)?
+;
+	LD	A,(SRAM_LAST_BANK)	;multi SRAM banks
+	CALL	TXT_8BIT_NUM
+	LD	HL,TXT8BIT_BUF
+	LD	DE,SRAMBANK_NUM_TXT+5
+	LD	BC,2
+	LDIR
+;
+	JR	PUT_INFO_JP5
+;
+;
+PUT_INFO_JP3:				;1-bank SRAM
+	LD	A,(SRM_SIZ)
+	CP	1
+	JR	NZ,PUT_INFO_JP3_1
+	LD	HL,SRAM_1K_TXT
+	JR	PUT_INFO_JP3_E
+;
+PUT_INFO_JP3_1:
+	CP	2
+	JR	NZ,PUT_INFO_JP3_2
+	LD	HL,SRAM_2K_TXT
+	JR	PUT_INFO_JP3_E
+;
+PUT_INFO_JP3_2:
+	CP	3
+	JR	NZ,PUT_INFO_JP3_3
+	LD	HL,SRAM_4K_TXT
+	JR	PUT_INFO_JP3_E
+;
+PUT_INFO_JP3_3:
+	LD	HL,SRAM_8K_TXT
+;
+;
+PUT_INFO_JP3_E:
+	LD	DE,SRAMBANK_NUM_TXT+3
+	LD	BC,5
+	LDIR
+;
+	JR	PUT_INFO_JP5
+
+
+PUT_INFO_JP2:
+	LD	HL,NO_SRAM_TXT
+	LD	DE,SRAMBANK_NUM_TXT
+	LD	BC,9
+	LDIR				;(no SRAM)
+;
+	JR	PUT_INFO_JP5
+;
+PUT_INFO_JP2_1:
+	LD	HL,SHIN10_SRAM_TXT
+	LD	DE,SRAMBANK_NUM_TXT
+	LD	BC,9
+	LDIR				;'KONAMI-8K'
+;
+	JR	PUT_INFO_JP5
+;
+;
+PUT_INFO_JP1:				;NORMAL ROM
+	LD	HL,NML_ROM_TXT
+	LD	DE,INF_BUF2
+	LD	BC,24
+	LDIR
+;
+	LD	HL,(ROM_STR_ADDR)
+	CALL	TXT_16BIT_NUM
+	LD	HL,TXT16BIT_BUF
+	LD	DE,NORMAL_ADR_TXT
+	LD	BC,4
+	LDIR
+;
+	LD	HL,(ROM_END_ADDR)
+	CALL	TXT_16BIT_NUM
+	LD	HL,TXT16BIT_BUF
+	LD	DE,NORMAL_ADR_TXT + 5
+	LD	BC,4
+	LDIR
+;
+	LD	HL,NORMAL_STR_TXT
+	LD	DE,INF_BUF3
+	LD	BC,NORMAL_END_TXT - NORMAL_STR_TXT
+	LDIR
+;
+	JR	PUT_INFO_JP4
+;
+;
+PUT_INFO_JP5:
+	LD	HL,ROMBANK_STR_TXT	;メガROM
+	LD	DE,INF_BUF3
+	LD	BC,ROMBANK_END_TXT - ROMBANK_STR_TXT
+	LDIR
+;
+;
+PUT_INFO_JP4:
+	LD	DE,INF_FILE_BUF_STR
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	HL,FCB1 + 1		;file name
+	LD	DE,INF_BUF1
+	LD	BC,8
+	LDIR
+;
+	LD	HL,ROM_EXT_TXT		;退避していた拡張子
+	LD	DE,INF_BUF1 + 9		;拡張子
+	LD	BC,3
+	LDIR
+;
+;
+;
+	LD	HL,INF_FILE_FOOT
+	LD	DE,FCB1+9
+	LD	BC,3
+	LDIR		;拡張子を「INF」にする
+;
+	CALL	FILE_OPEN
+	JR	NC,PUT_INFO_JP6
+;
+	LD	C,09H	;error
+	CALL	MSXDOS
+;
+	SCF
+	RET
+;
+;
+PUT_INFO_JP6:
+	LD	DE,INF_FILE_BUF_STR
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	DE,FCB1
+	LD	A,(ROM_TYPE)
+	CP	NORMAL_ROM
+	JR	NZ,PUT_INFO_JP6_1
+;
+				;normal-ROM
+	LD	HL,INF_BUF3 - INF_FILE_BUF_STR + NORMAL_END_TXT - NORMAL_STR_TXT
+	JR	PUT_INFO_JP6_2
+
+PUT_INFO_JP6_1:			;MEGA-ROM
+	LD	HL,INF_BUF3 - INF_FILE_BUF_STR + ROMBANK_END_TXT - ROMBANK_STR_TXT
+
+PUT_INFO_JP6_2:
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JR	Z,INF_SAV_NO_ERR
+;
+	LD	DE,INF_SAV_ERR_TXT
+	LD	C,09H
+	CALL	MSXDOS
+
+INF_SAV_NO_ERR:
+;
+	CALL	FILE_CLOSE
+;
+	OR	A	;no ERROR
+;
+	RET
+;
+;
+INF_FILE_BUF_STR:
+	DB	'MSX-Cartridge Inspector ver '
+	SOFTVER
+	DB	CR,LF
+	DB	'file name:'
+INF_BUF1:
+	DS	8
+	DB	'.'
+	DS	3
+	DB	CR,LF
+;
+	DB	'ROM type:'
+INF_BUF2:
+	DS	24,20H
+	DB	CR,LF
+;
+INF_BUF3:
+	DS	50,20H
+;
+INF_FILE_BUF_END:
+;
+;
+NML_ROM_TXT:
+	DB	'normal-ROM(not-MEGAROM) ';24 letters
+;
+ROM_TYP_TXT:
+	DB	'KONAMI-MEGAROM(not-SCC) ';24 letters
+	DB	'KONAMI-MEGAROM(with-SCC)'
+	DB	'ASCII-MEGAROM(8KB bank) '
+	DB	'ASCII-MEGAROM(16KB bank)'
+	DB	'undefined ROM type.     '
+	DB	'KONAMI(shin-10-bai[GM2])'
+	DB	'R-TYPE(ASCII-16KB bank) '
+	DB	'Hurry-FOX ROM(16Kx4bank)'
+	DB	'CROSS-BLAIM (16Kx4bank) '
+	DB	'HALNOTE ROM(8Kx128bank) '
+;
+;
+ROMBANK_STR_TXT:
+	DB	'ROM bank:'
+ROMBANK_NUM_TXT:
+	DB	'xx - xx',CR,LF
+	DB	'SRAM bank:'
+SRAMBANK_NUM_TXT:
+	DB	'xx - xx  '
+ROMBANK_END_TXT:
+;
+NORMAL_STR_TXT:
+	DB	'ADDRESS:'
+NORMAL_ADR_TXT:
+	DB	'xxxx-xxxx'	;only use normal-ROM
+NORMAL_END_TXT:
+;
+NO_SRAM_TXT:
+	DB	'(no SRAM)'
+SHIN10_SRAM_TXT:
+	DB	'KONAMI-8K'
+;
+INF_SAV_ERR_TXT:
+	DB	'*** INF file save error.',CR,LF,EOF
+;
+INF_TXT1:
+	DB	'*SAVE START.',CR,LF,EOF
+INF_TXT2:
+	DB	'*SAVE END.',CR,LF,EOF
+
+;
+;
+TXT_16BIT_NUM:
+;input:HL=number to display
+;output:TXT16BIT_BUF(4bytes)
+;
+	LD	BC,TXT16BIT_BUF
+;
+	LD	D,H
+	LD	A,H
+	SRL	A
+	SRL	A
+	SRL	A
+	SRL	A
+	CALL	TXT16BIT_JP1
+	LD	A,D
+	AND	00001111B
+	CALL	TXT16BIT_JP1
+;
+	LD	D,L
+	LD	A,L
+	SRL	A
+	SRL	A
+	SRL	A
+	SRL	A
+	CALL	TXT16BIT_JP1
+	LD	A,D
+	AND	00001111B
+	CALL	TXT16BIT_JP1
+;
+;*	LD	DE,TXT16BIT_BUF	;DEBUG
+;*	LD	C,09H
+;*	CALL	MSXDOS
+;
+	RET
+;
+TXT16BIT_JP1:
+	CP	0AH
+	JR	C,TXT16BIT_JP2
+	ADD	A,7
+TXT16BIT_JP2:
+	ADD	A,30H
+	LD	(BC),A
+	INC	BC
+;
+	RET
+;
+TXT16BIT_BUF:
+	DS	4
+;*	DB	CR,LF,EOF
+;
+;
+;
+TXT_8BIT_NUM:
+;input:A=number to TXT
+;output:TXT8BIT_BUF(2bytes)
+;
+	LD	BC,TXT8BIT_BUF
+;
+	LD	D,A
+	SRL	A
+	SRL	A
+	SRL	A
+	SRL	A
+	CALL	TXT8BIT_JP1
+	LD	A,D
+	AND	00001111B
+	CALL	TXT8BIT_JP1
+;
+	RET
+;
+TXT8BIT_JP1:
+	CP	0AH
+	JR	C,TXT8BIT_JP2
+	ADD	A,7
+TXT8BIT_JP2:
+	ADD	A,30H
+	LD	(BC),A
+	INC	BC
+;
+	RET
+;
+TXT8BIT_BUF:
+	DS	2
+	DB	CR,LF,EOF	;***debug
+;
+;
+ROMTYPE_CHK:
+;*** ROM EMPTY CHECK
+;
+	LD	HL,4000H
+	LD	BC,8000H	;page 1 to 2
+;
+NML_ROM_LOOP:
+	LD	A,(HL)
+	OR	A
+	JR	Z,NML_ROM_JMP
+	CP	0FFH
+	JR	NZ,MEGCHK
+;
+NML_ROM_JMP:
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,NML_ROM_LOOP
+;
+	LD	DE,NOT_ROM_TXT	;*** ROM not exist.
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,NOT_EXIST
+	LD	(ROM_TYPE),A
+;
+	RET
+;
+;
+MEGCHK:
+;*** MEGAROM TYPE CHECK
+;
+	CALL	TYPECHK_NONSCC
+	JP	NC,CHECK2
+;
+;
+	LD	HL,4010H	;新10倍チェック
+	LD	DE,SHIN10_BIN
+	LD	C,4
+;
+SHIN10_LOOP:
+	LD	A,(HL)
+	LD	B,A
+	LD	A,(DE)
+	CP	B
+	JR	NZ,NOT_SHIN10_JP
+;
+	INC	HL
+	INC	DE
+	DEC	C
+	JR	NZ,SHIN10_LOOP
+;
+	JR	SHIN10_TYPE
+;
+SHIN10_BIN:
+	DB	'YZ',00H,00H	;新10倍特有のデータ（4バイト）
+;
+;
+NOT_SHIN10_JP:			;新10倍じゃない非SCCコナミ
+	LD	A,NON_SCC_ROM
+	LD	(ROM_TYPE),A
+;
+	LD	HL,8000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	HL,9FFFH
+	LD	(ROM_END_ADDR),HL
+;
+	LD	HL,8000H
+	LD	(ROM_BANK_REG),HL
+;
+	LD	HL,2000H
+	LD	(ROM_BANK_SIZ),HL
+;
+;
+	LD	HL,6000H
+	LD	(CMP_STR_ADDR),HL
+;
+	LD	HL,7FFFH
+	LD	(CMP_END_ADDR),HL
+;
+	LD	HL,6000H
+	LD	(CMP_BANK_REG),HL
+;
+;
+	LD	DE,NONSCC_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+
+;
+SHIN10_TYPE:
+	LD	A,SHIN10_ROM	;新10倍
+	LD	(ROM_TYPE),A
+;
+	LD	HL,8000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	HL,9FFFH
+	LD	(ROM_END_ADDR),HL
+;
+	LD	HL,8000H
+	LD	(ROM_BANK_REG),HL
+;
+	LD	HL,2000H
+	LD	(ROM_BANK_SIZ),HL
+;
+;
+	LD	HL,6000H
+	LD	(CMP_STR_ADDR),HL
+;
+	LD	HL,7FFFH
+	LD	(CMP_END_ADDR),HL
+;
+	LD	HL,6000H
+	LD	(CMP_BANK_REG),HL
+;
+;
+	LD	DE,SHIN10_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+;
+;
+CHECK2:
+	CALL	TYPECHK_SCC
+	JR	NC,CHECK3
+;
+	LD	A,SCC_ROM	;SCC付コナミ
+	LD	(ROM_TYPE),A
+;
+	LD	HL,0A000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	HL,0BFFFH
+	LD	(ROM_END_ADDR),HL
+;
+	LD	HL,0B000H
+	LD	(ROM_BANK_REG),HL
+;
+	LD	HL,2000H
+	LD	(ROM_BANK_SIZ),HL
+;
+;
+	LD	HL,6000H
+	LD	(CMP_STR_ADDR),HL
+;
+	LD	HL,7FFFH
+	LD	(CMP_END_ADDR),HL
+;
+	LD	HL,7000H
+	LD	(CMP_BANK_REG),HL
+;
+;
+	LD	DE,SCC_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+
+
+CHECK3:
+	CALL	TYPECHK_ASC
+	JP	NC,NORMAL_ROM_CHK	;ページ3のルーチンに飛ぶ
+;
+	LD	A,B
+	CP	1
+	JR	Z,TYPE_RTYPE
+;
+	CP	2
+	JR	Z,TYPE_HURRYFOX
+;
+	CP	16
+	JR	Z,TYPE_16K
+	LD	DE,ASC8_TXT
+;
+;
+	LD	A,ASCII8K_ROM	;アスキー8K
+	LD	(ROM_TYPE),A
+;
+	LD	HL,8000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	HL,9FFFH
+	LD	(ROM_END_ADDR),HL
+;
+	LD	HL,7000H
+	LD	(ROM_BANK_REG),HL
+;
+	LD	HL,2000H
+	LD	(ROM_BANK_SIZ),HL
+;
+;
+	LD	HL,6000H
+	LD	(CMP_STR_ADDR),HL
+;
+	LD	HL,7FFFH
+	LD	(CMP_END_ADDR),HL
+;
+	LD	HL,6800H
+	LD	(CMP_BANK_REG),HL
+
+	JR	PUT_TXT
+;
+;
+TYPE_16K:
+	LD	DE,ASC16_TXT
+;
+	LD	A,ASCII16K_ROM	;アスキー16K
+TYPE16K_JP:
+	LD	(ROM_TYPE),A
+;
+	LD	HL,8000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	HL,0BFFFH
+	LD	(ROM_END_ADDR),HL
+;
+	LD	HL,7000H
+	LD	(ROM_BANK_REG),HL
+;
+	LD	HL,4000H
+	LD	(ROM_BANK_SIZ),HL
+;
+;
+	LD	HL,4000H
+	LD	(CMP_STR_ADDR),HL
+;
+	LD	HL,7FFFH
+	LD	(CMP_END_ADDR),HL
+;
+	LD	HL,6000H
+	LD	(CMP_BANK_REG),HL
+;
+	JR	PUT_TXT
+;
+;
+TYPE_RTYPE:
+	LD	DE,R_TYPE_TXT
+;
+	LD	A,RTYPE_ROM	;R-TYPE
+;
+	JR	TYPE16K_JP
+;
+;
+TYPE_HURRYFOX:
+	LD	DE,HURRYFOX_TXT
+;
+	LD	A,HURRYFOX_ROM	;はーりぃふぉっくす雪の魔王編
+	LD	(ROM_TYPE),A
+;
+	LD	HL,6000H	;セーブ時には関係ないが、最後の初期化用
+	LD	(ROM_BANK_REG),HL
+	LD	HL,7000H
+	LD	(CMP_BANK_REG),HL
+;
+	XOR	A
+	LD	(ROM_FIRST_BANK),A	;必要ないが念のため
+	LD	(SRAM_FIRST_BANK),A	;こちらも
+;
+	LD	A,3
+	LD	(ROM_LAST_BANK),A
+;
+;
+PUT_TXT:
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+;
+;
+
+;
+;
+;*** KONAMI(non-SCC type)
+;CF = 1 : non-SCC type
+;CF = 0 : not 'non-SCC' type
+;
+TYPECHK_NONSCC:
+;
+	XOR	A
+	LD	(KNM_BANKREG1),A
+;
+	LD	DE,CART_WORK
+	LD	HL,8000H
+	LD	BC,16
+	LDIR
+;
+	LD	A,1
+	LD	(KNM_BANKREG1),A
+;
+	LD	HL,8000H
+	LD	B,16
+	LD	DE,CART_WORK
+
+TYPE_LOOP1:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,NONSCC_TYPE
+	INC	DE
+	INC	HL
+	DJNZ	TYPE_LOOP1
+	
+	OR	A
+	RET
+
+NONSCC_TYPE:			;not match = non-SCC type
+	SCF
+	RET
+;
+;
+;*** KONAMI(SCC type)
+;CF = 1 : SCC type
+;CF = 0 : not 'SCC' type
+;
+TYPECHK_SCC:
+;
+	XOR	A
+	LD	(SCC_BANKREG1),A
+;
+	LD	DE,CART_WORK
+	LD	HL,4000H
+	LD	BC,16
+	LDIR
+;
+	LD	A,1
+	LD	(SCC_BANKREG1),A
+;
+	LD	HL,4000H
+	LD	B,16
+	LD	DE,CART_WORK
+
+TYPE_LOOP2:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,SCC_TYPE
+	INC	DE
+	INC	HL
+	DJNZ	TYPE_LOOP2
+	
+	OR	A
+	RET
+
+SCC_TYPE:			;not match = non-SCC type
+	SCF
+	RET
+;
+;
+;*** ASCII type
+;CF = 1 : ASCII type
+;B  = 8 : 8K bank
+;B  = 16: 16K bank
+;B  = 1 : R-TYPE
+;B  = 2 : Hurry-Fox
+;
+;CF = 0 : not 'ASCII' type
+;
+TYPECHK_ASC:
+;
+	XOR	A
+	LD	(ASC_BANKREG1),A
+;
+	LD	DE,CART_WORK
+	LD	HL,8000H
+	LD	BC,COMP_BYTES
+	LDIR
+;
+	LD	DE,CART_WORK2
+	LD	HL,0A000H
+	LD	BC,COMP_BYTES
+	LDIR
+;
+	LD	A,1
+	LD	(ASC_BANKREG1),A
+;
+	LD	HL,8000H
+	LD	DE,CART_WORK
+	LD	BC,COMP_BYTES
+;
+TYPE_LOOP3:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,ASC_TYPE8
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,TYPE_LOOP3
+;
+;	LD	DE,MATCH_TXT	;DOS2カートリッジ確認用（削除済）
+;	LD	C,9
+;	CALL	MSXDOS
+;
+	OR	A		;not ASCII type
+	RET
+;
+;MATCH_TXT:
+;	DB	'MATCH.',CR,LF,EOF
+;
+;
+ASC_TYPE8:			;not match = ASCII type
+	LD	HL,0A000H
+	LD	BC,COMP_BYTES
+	LD	DE,CART_WORK2
+
+TYPE_LOOP4:
+	LD	A,(DE)
+	CP	(HL)
+;*	JR	NZ,ASC_TYPE16
+	JR	NZ,CHK_RTYPE
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,TYPE_LOOP4
+
+	LD	B,8		;ASCII-type(8K bank)
+	SCF
+	RET
+;
+CHK_RTYPE:			;R-TYPEでないかのチェック
+	LD	A,0FH
+	LD	(ASC_BANKREG1),A
+;
+	LD	HL,4000H
+	LD	DE,8000H
+	LD	BC,4000H
+;
+RTYPE_LOOP:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,CHK_HURRYFOX
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,RTYPE_LOOP
+;
+	LD	B,1		;R-TYPE MEGAROM-controller
+	SCF
+	RET
+;
+;
+CHK_HURRYFOX:		;はーりぃふぉっくす雪の魔王編かのチェック
+	XOR	A
+	LD	(6000H),A
+;
+	LD	HL,4000H
+	LD	DE,CART_WORK
+	LD	BC,COMP_BYTES
+	LDIR
+;
+	LD	A,2	;バンクの0と2が同じかを確認する
+	LD	(6000H),A
+;
+	LD	HL,4000H
+	LD	DE,CART_WORK
+	LD	BC,COMP_BYTES
+;
+HURRYFOX_LOOP:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,ASC_TYPE16
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,HURRYFOX_LOOP
+;
+	LD	B,2		;HURRY-FOX
+	SCF
+	RET
+;
+;
+ASC_TYPE16:
+	LD	B,16		;ASCII-type(16K bank)
+	SCF
+	RET
+;
+;
+;
+;initialize bank registor(for SRAM protection)
+RET_BANK:
+	XOR	A
+	LD	HL,(ROM_BANK_REG)
+	LD	(HL),A
+;
+	LD	HL,(CMP_BANK_REG)
+	LD	(HL),A
+;
+	RET
+;
+;
+;バンクの開始と終了位置を調査する
+CHK_BANKNUM:
+	LD	A,(OPTION_DUMP)
+	OR	A
+	JR	Z,CHK_BANKNUM_JP1
+
+	LD	DE,BANKNO_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+CHK_BANKNUM_JP1:
+	XOR	A
+	LD	HL,(ROM_BANK_REG)
+	LD	(HL),A
+;
+	XOR	A
+	LD	HL,(CMP_BANK_REG)
+	LD	(HL),A
+;
+	XOR	A
+	LD	(NOW_BANKNO),A
+;
+;
+CHK_BANK_LOOP:
+	LD	A,(OPTION_DUMP)
+	OR	A
+	JP	Z,SKIP_DUMP2
+;
+	LD	A,(NOW_BANKNO)
+	CALL	PUT_8BIT_NUM	;bank number put
+;
+;
+;---(8bytes dump[for debug])
+	XOR	A
+	LD	(LOOP_BANKNO),A
+
+	LD	DE,BANK_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+BANK_LOOP2:
+	LD	A,(LOOP_BANKNO)
+	LD	B,A
+	LD	HL,(ROM_STR_ADDR)
+	LD	A,L
+	ADD	A,B
+	LD	L,A
+;
+	LD	A,(HL)
+	CALL	PUT_8BIT_NUM
+;
+	LD	A,(LOOP_BANKNO)
+	INC	A
+	LD	(LOOP_BANKNO),A
+	CP	8		;put 8 bytes
+	JR	NZ,BANK_LOOP2
+;
+;*	JR	SKIP_DUMP1
+;---
+;
+SKIP_DUMP2:			;simple display mode
+;*	LD	E,'.'
+;*	LD	C,02H
+;*	CALL	MSXDOS
+;
+;
+SKIP_DUMP1:
+	CALL	SRAM_CHECK	;SRAM?
+	CALL	NC,SRM_SIZ_CHK
+;
+	LD	A,(SRAM_FIRST_BANK)
+	OR	A
+	JR	Z,CHK_BANK_JP3
+
+	LD	A,(SRM_CHK_FRG)
+	OR	A
+	JR	Z,SRAM_BANK_END1
+;
+	CALL	DUPLI_SRAM_CHECK
+	JR	NC,SRAM_BANK_END2
+;
+	JR	CHK_BANK_JP1
+;
+;
+CHK_BANK_JP3:			;not SRAM
+	CALL	EMPTY_CHECK	;ROM bank & empty ?
+	JR	NC,CHK_BANK_JP1
+;
+;**CHK_BANK_JP2:
+	CALL	DUPLI_CHECK1	;same as bank #0?
+	CALL	NC,BANK0_SAME_FOUND
+;
+				;ROM bank not empty
+	LD	A,(MAX_BANK_FRG)
+	OR	A
+	JR	NZ,CHK_BANK_JP1
+;
+	LD	A,(NOW_BANKNO)
+	LD	(ROM_LAST_BANK),A
+;
+;
+CHK_BANK_JP1:
+	LD	A,(OPTION_DUMP)
+	OR	A
+	JP	Z,SKIP_DUMP3
+
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+;
+SKIP_DUMP3:
+	LD	A,(NOW_BANKNO)
+	INC	A
+	RET	Z		;escape
+	LD	(NOW_BANKNO),A
+;
+	LD	HL,(ROM_BANK_REG)
+	LD	(HL),A
+;
+	JP	CHK_BANK_LOOP
+;
+;
+BANK0_SAME_FOUND:
+	LD	A,1
+	LD	(MAX_BANK_FRG),A
+;
+	RET
+
+
+	LD	A,(MAX_BANK_FRG)
+	OR	A
+	RET	NZ
+;
+	LD	A,(NOW_BANKNO)
+	DEC	A
+	LD	(ROM_LAST_BANK),A
+;
+	LD	A,1
+	LD	(MAX_BANK_FRG),A
+;
+	RET
+;
+;
+SRAM_BANK_END2:
+	LD	A,(NOW_BANKNO)
+	DEC	A
+	JR	SRAM_BANK_END_JP
+
+SRAM_BANK_END1:
+	LD	A,(NOW_BANKNO)
+
+SRAM_BANK_END_JP:
+	LD	(SRAM_LAST_BANK),A
+;
+	LD	A,(OPTION_DUMP)
+	OR	A
+	RET	Z
+;
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+
+;
+
+LOOP_BANKNO:
+	DS	1	;ダンプ表示用、要らない気がする
+;
+BANKNO_TXT:
+	DB	' now reading:',CR,LF,EOF
+BANK_TXT:
+	DB	'bank: ',EOF
+;
+;
+;***SRAM DUPLICATE CHECK
+;CF = 1 : bank is different from first SRAM bank
+;CF = 0 : bank is same as first SRAM bank
+;
+DUPLI_SRAM_CHECK:
+	LD	A,(NOW_BANKNO)
+	LD	B,A
+	LD	A,(SRAM_FIRST_BANK)
+	CP	B
+	SCF
+	RET	Z
+;
+	LD	HL,(CMP_BANK_REG)
+	LD	(HL),A
+;
+	LD	HL,(ROM_STR_ADDR)
+	LD	D,H
+	LD	E,L
+	LD	HL,(CMP_STR_ADDR)
+;
+DUP_SRM_LOOP:
+	LD	A,(DE)
+	LD	B,(HL)
+	CP	B
+	JR	NZ,DUP_SRM_JMP
+;
+	LD	B,H
+	LD	C,L
+	LD	HL,(ROM_END_ADDR)
+	OR	A
+	SBC	HL,DE
+	JR	Z,DUP_SRM_JMP2
+;
+	LD	H,B
+	LD	L,C
+	INC	HL
+	INC	DE
+;
+	JR	DUP_SRM_LOOP
+;
+DUP_SRM_JMP2:
+	LD	A,(OPTION_DUMP)
+	OR	A
+	JP	Z,SKIP_DUMP4
+
+	LD	DE,DUP_SRM_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+SKIP_DUMP4:
+	OR	A	;same as first SRAM bank
+	RET
+;
+DUP_SRM_JMP:
+	SCF
+	RET		;different from first SRAM bank
+;
+DUP_SRM_TXT:
+	DB	': *same as first SRAM bank.',EOF
+;
+;
+;***
+PUT_16BIT_NUM:
+;input:HL=number to display
+;
+	LD	BC,PUT16BIT_BUF
+;
+	LD	D,H
+	LD	A,H
+	SRL	A
+	SRL	A
+	SRL	A
+	SRL	A
+	CALL	PUT16BIT_JP1
+	LD	A,D
+	AND	00001111B
+	CALL	PUT16BIT_JP1
+;
+	LD	D,L
+	LD	A,L
+	SRL	A
+	SRL	A
+	SRL	A
+	SRL	A
+	CALL	PUT16BIT_JP1
+	LD	A,D
+	AND	00001111B
+	CALL	PUT16BIT_JP1
+;
+	LD	DE,PUT16BIT_BUF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+;
+PUT16BIT_JP1:
+	CP	0AH
+	JR	C,PUT16BIT_JP2
+	ADD	A,7
+PUT16BIT_JP2:
+	ADD	A,30H
+	LD	(BC),A
+	INC	BC
+;
+	RET
+;
+PUT16BIT_BUF:
+	DS	4
+	DB	EOF
+;
+;
+;
+PUT_8BIT_NUM:
+;input:A=number to display
+;
+	LD	BC,PUT8BIT_BUF
+;
+	LD	D,A
+	SRL	A
+	SRL	A
+	SRL	A
+	SRL	A
+	CALL	PUT8BIT1
+	LD	A,D
+	AND	00001111B
+	CALL	PUT8BIT1
+;
+	LD	DE,PUT8BIT_BUF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+;
+PUT8BIT1:
+	CP	0AH
+	JR	C,PUT8BIT2
+	ADD	A,7
+PUT8BIT2:
+	ADD	A,30H
+	LD	(BC),A
+	INC	BC
+;
+	RET
+;
+PUT8BIT_BUF:
+	DS	2
+	DB	' ',EOF
+;
+PUT8BIT_CRLF:
+	DB	CR,LF,EOF
+;
+;
+;***SRAM check
+;CF = 1 : bank is not SRAM
+;CF = 0 : bank is SRAM
+;
+SRAM_CHECK:
+	LD	E,0
+;
+	LD	A,(ROM_TYPE)	;KONAMI-type = no check.
+	CP	NON_SCC_ROM
+	JR	Z,NOT_SRAM
+;
+	CP	SCC_ROM
+	JR	Z,NOT_SRAM
+;
+;
+	LD	HL,(ROM_BANK_SIZ)
+	LD	B,H
+	LD	C,L
+	LD	HL,(ROM_STR_ADDR)
+;
+	LD	E,0	;SRAM FLAG RESET(1 = SRAM)
+;
+SRAM_LOOP1:
+	LD	A,(HL)
+	LD	D,A
+	CPL
+	LD	(HL),A
+	LD	A,(HL)
+	CP	D
+	JR	Z,NOT_SRAM
+;
+	LD	A,D	;SRAM found, write back original data
+	LD	(HL),A
+;
+	LD	A,(SRAM_FIRST_BANK)
+	OR	A
+	JR	NZ,SRAM_FOUNDED
+
+	LD	A,(NOW_BANKNO)
+	LD	(SRAM_FIRST_BANK),A
+;
+SRAM_FOUNDED:
+	LD	E,1	;SRAM FLAG ON
+;
+	DEC	BC
+	INC	HL
+	LD	A,B
+	OR	C
+	JR	NZ,SRAM_LOOP1
+;
+	LD	A,(OPTION_DUMP)
+	OR	A
+	JP	Z,SKIP_SRAM1
+
+	LD	DE,SRAM_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+SKIP_SRAM1:
+	OR	A
+	RET
+;
+NOT_SRAM:
+	LD	A,E
+	CP	1
+	JR	Z,HALF_SRAM
+;
+	SCF
+	RET
+;
+;
+HALF_SRAM:	;バンク全体がSRAMではない場所を発見
+	LD	A,(OPTION_DUMP)
+	OR	A
+	RET	Z
+;
+	LD	DE,HALF_SRM_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+;
+;
+SRAM_TXT:
+	DB	': * SRAM:',EOF
+;
+HALF_SRM_TXT:
+	DB	': * HALF-SRAM:',EOF
+;
+;
+;*** SRAM SIZE CHECK
+;
+;
+SRM_SIZ_CHK:
+	LD	BC,400H		;1KB
+	CALL	GST_IMG_SER
+	JR	NC,SRM_SIZ_1K
+;
+	LD	BC,800H		;2KB
+	CALL	GST_IMG_SER
+	JR	NC,SRM_SIZ_2K
+;	
+	LD	BC,1000H	;4KB
+	CALL	GST_IMG_SER
+	JR	NC,SRM_SIZ_4K
+;
+	LD	HL,(ROM_BANK_SIZ)
+	LD	BC,2000H	;bank size = 8K?
+	OR	A
+	SBC	HL,BC
+	JR	Z,SRM_SIZ_8K_F
+;	
+	LD	BC,2000H	;16K bank + SRAM 8KB
+	CALL	GST_IMG_SER
+	JR	NC,SRM_SIZ_8K_H
+;
+	JR	SRM_SIZ_16K	;16KB
+;
+;**	LD	DE,SRM_SIZ_ERR
+;**	LD	C,09H
+;**	CALL	MSXDOS
+;
+	RET
+;
+;
+SRM_SIZ_1K:
+	LD	A,1
+	LD	(SRM_SIZ),A
+;
+	XOR	A
+	LD	(SRM_CHK_FRG),A
+;
+	LD	DE,SRM_1K_TXT
+	JR	SRAM_PUT
+
+	RET
+;
+SRM_SIZ_2K:
+	LD	A,2
+	LD	(SRM_SIZ),A
+;
+	XOR	A
+	LD	(SRM_CHK_FRG),A
+;
+	LD	DE,SRM_2K_TXT
+	JR	SRAM_PUT
+;
+	RET
+;
+SRM_SIZ_4K:
+	LD	A,3
+	LD	(SRM_SIZ),A
+;
+	XOR	A
+	LD	(SRM_CHK_FRG),A
+;
+	LD	DE,SRM_4K_TXT
+	JR	SRAM_PUT
+;
+	RET
+;
+SRM_SIZ_8K_F:
+	LD	A,1
+	JR	SRM_SIZ_8K_J
+;
+SRM_SIZ_8K_H:
+	XOR	A
+;
+SRM_SIZ_8K_J:
+	LD	(SRM_CHK_FRG),A
+;
+	LD	A,4
+	LD	(SRM_SIZ),A
+;
+;
+	LD	DE,SRM_8K_TXT
+	JR	SRAM_PUT
+;
+	RET
+;
+SRM_SIZ_16K:
+	LD	A,5
+	LD	(SRM_SIZ),A
+;
+	LD	A,1
+	LD	(SRM_CHK_FRG),A
+;
+	LD	DE,SRM_16K_TXT
+	JR	SRAM_PUT
+;
+;
+SRAM_PUT:
+	LD	A,(OPTION_DUMP)
+	OR	A
+	RET	Z
+;
+	LD	C,09H
+	CALL	MSXDOS
+	RET
+;
+;
+SRM_1K_TXT:
+	DB	'1K',EOF
+SRM_2K_TXT:
+	DB	'2K',EOF
+SRM_4K_TXT:
+	DB	'4K',EOF
+SRM_8K_TXT:
+	DB	'8K',EOF
+SRM_16K_TXT:
+	DB	'16K',EOF
+;
+;
+;*** GHOST IMAGE SEARCH
+;*INPUT
+;BC = ghost image relative address
+;(400H,800H,1000H,2000H,4000H,8000H)
+;
+;*OUTPUT
+;CF = 0 : ghost image found
+;CF = 1 : ghost not found
+;
+GST_IMG_SER:
+	LD	HL,(ROM_STR_ADDR)
+;*	ADD	HL,BC
+;*	LD	D,H
+;*	LD	E,L
+;*	LD	HL,(ROM_STR_ADDR)
+
+	LD	D,H
+	LD	E,L	;DE = (ROM_STR_ADDR)
+	ADD	HL,BC	;HL = (ROM_STR_ADDR) + BC
+
+GST_IMR_JP2:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,GST_IMR_JP1
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,GST_IMR_JP2
+;
+	OR	A	;ghost image found
+	RET
+;
+GST_IMR_JP1:
+	SCF		;diffrent from +BC bytes address
+	RET
+;
+;
+;***bank empty check
+;CF = 1 : bank is not empty
+;CF = 0 : bank is empty
+;
+EMPTY_CHECK:
+;
+	LD	HL,(ROM_BANK_SIZ)
+	LD	B,H
+	LD	C,L
+	LD	HL,(ROM_STR_ADDR)
+;
+EMP_CHK_LOOP:
+	LD	A,(HL)
+	OR	A
+	JR	Z,EMP_CHK_JMP
+	CP	0FFH
+	JR	NZ,EMP_CHK_JMP2
+;
+EMP_CHK_JMP:
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,EMP_CHK_LOOP
+;
+	LD	A,(OPTION_DUMP)
+	OR	A
+	JP	Z,SKIP_DUMP5
+
+	LD	DE,EMP_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+SKIP_DUMP5:
+	OR	A	;bank empty
+	RET
+;
+EMP_CHK_JMP2:
+	SCF
+	RET		;bank is not empty
+;
+EMP_TXT:
+	DB	': ** empty.',EOF
+;
+;
+;***bank duplicate check
+;CF = 1 : bank is different from no.0
+;CF = 0 : bank is same as no.0
+;
+DUPLI_CHECK1:
+;
+	LD	A,(NOW_BANKNO)
+	OR	A	;if bank=0,check skip
+	SCF
+	RET	Z
+;
+;*	XOR	A			;bank 0
+;*	LD	HL,(CMP_BANK_REG)	;ここで毎回書いてるせいでR-TYPEが総バンク数を誤認していた
+;*	LD	(HL),A
+;
+	LD	HL,(ROM_STR_ADDR)
+	LD	D,H
+	LD	E,L
+	LD	HL,(CMP_STR_ADDR)
+;
+DUP_CHK_LOOP:
+	LD	A,(DE)
+	LD	B,(HL)
+	CP	B
+	JR	NZ,DUP_CHK_JMP
+;
+	LD	B,H
+	LD	C,L
+	LD	HL,(ROM_END_ADDR)
+	OR	A
+	SBC	HL,DE
+	JR	Z,DUP_CHK_JMP2
+;
+	LD	H,B
+	LD	L,C
+	INC	HL
+	INC	DE
+;
+	JR	DUP_CHK_LOOP
+;
+DUP_CHK_JMP2:
+	LD	A,(OPTION_DUMP)
+	OR	A
+	JP	Z,SKIP_DUMP6
+
+	LD	DE,DUP_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+SKIP_DUMP6:
+	OR	A	;same as bank 0
+	RET
+;
+DUP_CHK_JMP:
+	SCF
+	RET		;different from bank 0
+;
+DUP_TXT:
+	DB	': *same as bank 0.',EOF
+;
+;
+;***bank duplicate check
+;CF = 1 : bank is different from one before bank
+;CF = 0 : bank is same as one before bank
+;
+DUPLI_CHECK2:
+	LD	A,(NOW_BANKNO)
+	OR	A	;if bank=0,check skip
+	SCF
+	RET	Z
+;
+	DEC	A	;one before bank
+	LD	HL,(CMP_BANK_REG)
+	LD	(HL),A
+;
+	LD	HL,(ROM_STR_ADDR)
+	LD	D,H
+	LD	E,L
+	LD	HL,(CMP_STR_ADDR)
+;
+DUP_CHK2_LOP:
+	LD	A,(DE)
+	LD	B,(HL)
+	CP	B
+	JR	NZ,DUP_CHK2_JP1
+;
+	LD	B,H
+	LD	C,L
+	LD	HL,(ROM_END_ADDR)
+	OR	A
+	SBC	HL,DE
+	JR	Z,DUP_CHK2_JP2
+;
+	LD	H,B
+	LD	L,C
+	INC	HL
+	INC	DE
+;
+	JR	DUP_CHK2_LOP
+;
+DUP_CHK2_JP2:
+	LD	DE,DUP_TXT2
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,(NOW_BANKNO)
+	LD	HL,(CMP_BANK_REG)
+	LD	(HL),A
+;
+	OR	A	;same as one before bank
+	RET
+;
+DUP_CHK2_JP1:
+	SCF
+	RET		;different from one before bank
+;
+DUP_TXT2:
+	DB	': *same as 1-before.',EOF
+;
+;
+;
+;save KONAMI[GAME MASTER2]S-RAM image
+;CF = 0 : no error
+;CF = 1 : write error
+;
+SHIN10_SRAM_SAVE:
+	LD	DE,S10_SRM_SAVE_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	HL,SRAM_FILE_FOOT
+	LD	DE,FCB1+9
+	LD	BC,3
+	LDIR		;拡張子を「SRM」にする
+;
+	CALL	FILE_OPEN
+	JR	NC,S10_SRM_SAV_JP1
+;
+	LD	C,09H
+	CALL	MSXDOS
+;
+	SCF
+	RET
+;
+S10_SRM_SAV_JP1:
+	LD	DE,PAGE1_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	A,10H
+	LD	HL,(ROM_BANK_REG)
+	LD	(HL),A
+;
+	LD	A,(ROM_STR_ADDR)
+	LD	DE,PAGE1_START
+	LD	BC,1000H
+	LDIR			;SRAM前半4KBを転送
+;
+	LD	A,30H
+	LD	HL,(ROM_BANK_REG)
+	LD	(HL),A
+;
+	LD	A,(ROM_STR_ADDR)
+	LD	DE,PAGE1_START + 1000H
+	LD	BC,1000H
+	LDIR			;SRAM後半4KBを転送
+;
+	LD	DE,FCB1
+	LD	HL,2000H	;8KB固定で保存
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JR	NZ,S10_SRM_SAV_ERR
+;
+S10_SRM_SAV_JP4:
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	CALL	FILE_CLOSE
+;
+	OR	A	;no error
+;
+	RET
+;
+S10_SRM_SAV_ERR:
+	LD	DE,SRAM_SAV_ERR_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	CALL	FILE_CLOSE
+;
+	SCF		;error
+;
+	RET
+;
+S10_SRM_SAVE_TXT:
+	DB	'*** SRAM[KONAMI] saving.',CR,LF,EOF
+;
+;
+;
+;save S-RAM image
+;CF = 0 : no error
+;CF = 1 : write error
+;
+SRAM_IMG_SAVE:
+	LD	DE,SRAM_SAVE_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	HL,SRAM_FILE_FOOT
+	LD	DE,FCB1+9
+	LD	BC,3
+	LDIR		;拡張子を「SRM」にする
+;
+	CALL	FILE_OPEN
+	JR	NC,SRAM_SAVE_JP1
+;
+	LD	C,09H
+	CALL	MSXDOS
+;
+	SCF
+	RET
+;
+SRAM_SAVE_JP1:
+;
+	LD	DE,PAGE1_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	A,(SRAM_FIRST_BANK)
+	LD	(NOW_WRT_BANK),A
+;
+SRAM_SAVE_JP2:
+	LD	A,1		;SLOT #1,アスキータイプのみ必要、コナミは不要
+	LD	HL,1*SIX_SHIFT	;page 1
+	CALL	ENASLT
+;
+	LD	A,(NOW_WRT_BANK)
+	LD	HL,(ROM_BANK_REG)
+	LD	(HL),A
+;
+	LD	A,(PG1RAM)	;PAGE 1 to RAM
+	LD	HL,1*SIX_SHIFT	;page 1
+	CALL	ENASLT
+;
+;
+	LD	HL,(ROM_STR_ADDR)
+	LD	DE,PAGE1_START
+	LD	BC,(ROM_BANK_SIZ)
+	LDIR
+;
+;
+	LD	A,(SRM_SIZ)
+	CP	S1K_SRAM
+	LD	HL,400H		;1K
+	JR	Z,SRAM_SAVE_JP3
+;
+	CP	S2K_SRAM
+	LD	HL,800H		;2K
+	JR	Z,SRAM_SAVE_JP3
+;
+	CP	S4K_SRAM
+	LD	HL,1000H	;4K
+	JR	Z,SRAM_SAVE_JP3
+;
+	CP	S8K_SRAM
+	LD	HL,2000H	;8K
+	JR	Z,SRAM_SAVE_JP3
+;
+	LD	HL,4000H	;16K
+;
+SRAM_SAVE_JP3:
+	LD	DE,FCB1
+;**	LD	HL,(ROM_BANK_SIZ)
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JR	NZ,SRAM_SAVE_ERR
+;
+	LD	A,(SRAM_LAST_BANK)
+	LD	B,A
+	LD	A,(NOW_WRT_BANK)
+	CP	B
+	JR	Z,SRAM_SAVE_JP4
+;
+	INC	A
+	LD	(NOW_WRT_BANK),A
+;
+	JR	SRAM_SAVE_JP2
+;
+SRAM_SAVE_JP4:
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	CALL	FILE_CLOSE
+;
+	OR	A	;no error
+;
+	RET
+;
+SRAM_SAVE_ERR:
+	LD	DE,SRAM_SAV_ERR_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	CALL	FILE_CLOSE
+;
+	SCF		;error
+;
+	RET
+;
+SRAM_SAVE_TXT:
+	DB	'*** SRAM saving.',CR,LF,EOF
+SRAM_SAV_ERR_TXT:
+	DB	'*** SRAM save error.',CR,LF,EOF
+;
+;
+;save rom image
+;CF = 0 : no error
+;CF = 1 : write error
+;
+ROM_IMG_SAVE:
+	LD	A,(ROM_TYPE)
+	CP	NORMAL_ROM
+	RET	Z		;念のため
+;
+	CP	HURRYFOX_ROM
+	JP	Z,FOX_ROM_SAVE	;はーりぃふぉっくす雪の魔王編は専用ルーチンへ
+;
+	CP	CROSSBLAIM_ROM
+	JP	Z,CBLAIM_ROM_SAVE	;クロスブレイムも専用ルーチンへ
+;
+;
+	LD	DE,PAGE1_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	A,(ROM_FIRST_BANK)
+	LD	(NOW_WRT_BANK),A
+;
+ROM_IMG_SAVE_JP1:
+	LD	E,'.'
+	LD	C,02H
+	CALL	MSXDOS
+;
+;
+	LD	A,1		;SLOT #1,アスキータイプのみ必要、コナミは不要
+	LD	HL,1*SIX_SHIFT	;page 1
+	CALL	ENASLT
+;
+	LD	A,(NOW_WRT_BANK)
+	LD	HL,(ROM_BANK_REG)
+	LD	(HL),A
+;
+	LD	A,(PG1RAM)	;PAGE 1 to RAM
+	LD	HL,1*SIX_SHIFT	;page 1
+	CALL	ENASLT
+;
+;
+	LD	HL,(ROM_STR_ADDR)
+	LD	DE,PAGE1_START
+	LD	BC,(ROM_BANK_SIZ)
+	LDIR
+;
+	LD	DE,FCB1
+	LD	HL,(ROM_BANK_SIZ)
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JR	NZ,ROM_IMG_SAVE_ERR
+;
+	LD	A,(ROM_LAST_BANK)
+	LD	B,A
+	LD	A,(NOW_WRT_BANK)
+	CP	B
+	JR	Z,ROM_IMG_SAVE_JP2
+;
+	INC	A
+	LD	(NOW_WRT_BANK),A
+;
+	JR	ROM_IMG_SAVE_JP1
+;
+;
+ROM_IMG_SAVE_JP2:
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	OR	A	;no error
+;
+	RET
+;
+;
+ROM_IMG_SAVE_ERR:
+	LD	DE,SAVE_ERR_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	SCF		;error
+;
+	RET
+;
+;
+FOX_ROM_SAVE:	;「はーりぃふぉっくす雪の魔王編」専用保存ルーチン
+	LD	A,1
+	LD	HL,1*SIX_SHIFT	;page 1:ROM Cartridge
+	CALL	ENASLT
+;
+	LD	A,(PG2RAM)
+	LD	HL,2*SIX_SHIFT	;page 2:RAM
+	CALL	ENASLT
+;
+	LD	DE,PAGE2_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	XOR	A
+	LD	(6000H),A
+;
+	LD	HL,4000H
+	LD	DE,8000H
+	LD	BC,4000H
+	LDIR
+;
+	LD	DE,FCB1
+	LD	HL,4000H
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JP	NZ,ROM_IMG_SAVE_ERR
+;
+	LD	A,1
+	LD	(6000H),A
+;
+	LD	HL,4000H
+	LD	DE,8000H
+	LD	BC,4000H
+	LDIR
+;
+	LD	DE,FCB1
+	LD	HL,4000H
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JP	NZ,ROM_IMG_SAVE_ERR
+;
+;
+	LD	A,1
+	LD	HL,2*SIX_SHIFT	;page 2:ROM Cartridge
+	CALL	ENASLT
+;
+	XOR	A
+	LD	(7000H),A
+;
+	LD	A,(PG1RAM)
+	LD	HL,1*SIX_SHIFT	;page 1:RAM
+	CALL	ENASLT
+;
+	LD	DE,PAGE1_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	HL,8000H
+	LD	DE,4000H
+	LD	BC,4000H
+	LDIR
+;
+	LD	DE,FCB1
+	LD	HL,4000H
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JP	NZ,ROM_IMG_SAVE_ERR
+;
+	LD	A,1
+	LD	HL,1*SIX_SHIFT	;page 1:ROM Cartridge
+	CALL	ENASLT
+;
+	LD	A,1
+	LD	(7000H),A
+;
+	LD	A,(PG1RAM)
+	LD	HL,1*SIX_SHIFT	;page 1:RAM
+	CALL	ENASLT
+;
+	LD	HL,8000H
+	LD	DE,4000H
+	LD	BC,4000H
+	LDIR
+;
+	LD	DE,FCB1
+	LD	HL,4000H
+	LD	C,26H
+	CALL	MSXDOS
+	OR	A
+	JP	NZ,ROM_IMG_SAVE_ERR
+;
+;
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	OR	A	;no error
+;
+	RET
+;
+;
+CBLAIM_ROM_SAVE:	;「クロスブレイム」専用保存ルーチン
+	LD	A,1
+	LD	HL,1*SIX_SHIFT	;page 1:ROM Cartridge
+	CALL	ENASLT
+;
+	LD	A,(PG2RAM)
+	LD	HL,2*SIX_SHIFT	;page 2:RAM
+	CALL	ENASLT
+;
+	LD	DE,PAGE2_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	HL,4000H
+	LD	DE,8000H
+	LD	BC,4000H
+	LDIR
+;
+	LD	DE,FCB1
+	LD	HL,4000H
+	LD	C,26H		;4000H-7FFFH save
+	CALL	MSXDOS
+	OR	A
+	JP	NZ,ROM_IMG_SAVE_ERR
+;
+;
+	LD	A,(PG1RAM)
+	LD	HL,1*SIX_SHIFT	;page 1:RAM
+	CALL	ENASLT
+;
+	LD	A,1
+	LD	HL,2*SIX_SHIFT	;page 2:ROM Cartridge
+	CALL	ENASLT
+;
+	LD	DE,PAGE1_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+;
+	XOR	A		;8000H-BFFFHのバンク番号0,2,3を保存する
+	CALL	CBSAVE_SUB
+	JP	NZ,ROM_IMG_SAVE_ERR
+
+;
+	LD	A,2
+	CALL	CBSAVE_SUB
+	JP	NZ,ROM_IMG_SAVE_ERR
+;
+	LD	A,3
+	CALL	CBSAVE_SUB
+	JP	NZ,ROM_IMG_SAVE_ERR
+;
+	OR	A	;暫定で何もしない
+	RET
+
+CBSAVE_SUB:
+	LD	(8000H),A
+;
+	LD	HL,8000H
+	LD	DE,4000H
+	LD	BC,4000H
+	LDIR
+;
+	LD	DE,FCB1
+	LD	HL,4000H
+	LD	C,26H		;8000H-BFFFH save
+	CALL	MSXDOS
+	OR	A
+;
+	RET
+;
+;
+;
+NOW_WRT_BANK:
+	DS	1
+SAVE_ERR_TXT:
+	DB	'*** ROM image write error.',CR,LF,EOF
+;
+;
+;
+;***change to ROM cartridge(SLOT #1)
+CHGSLT:
+	LD	A,1		;SLOT #1
+	LD	HL,1*SIX_SHIFT	;page 1
+	CALL	ENASLT
+;
+	LD	A,1
+	LD	HL,2*SIX_SHIFT	;page 2
+	CALL	ENASLT
+;
+;*	LD	DE,MES3		;***SLOT CHANGED.
+;*	LD	C,09H
+;*	CALL	MSXDOS
+;
+	RET
+;
+;
+;**return to main-RAM
+RETRAM:
+	LD	A,(PG1RAM)
+	LD	HL,1*SIX_SHIFT	;page 1
+	CALL	ENASLT
+;
+	LD	A,(PG2RAM)
+	LD	HL,2*SIX_SHIFT	;page 2
+	CALL	ENASLT
+;
+	RET
+;
+;
+;***CTRL-STOP(CTRL-C) PRESSED
+CTR_STOP:
+	CALL	RET_BANK
+;
+	CALL	RETRAM
+;
+	LD	HL,(BOOTADDR)
+	LD	(WARM_BOOT),HL
+;
+	LD	DE,CTRSTP_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+;
+	LD	DE,FCB1		;file close
+	LD	C,10H
+	CALL	MSXDOS
+;
+	OR	A
+	JR	CTR_STOP_JP2
+;
+	LD	DE,MES8_TXT	;file close error
+	LD	C,09H
+	CALL	MSXDOS
+;
+CTR_STOP_JP2:
+	EI
+;
+	LD	C,0
+	CALL	MSXDOS		;return to MSX-DOS
+;
+CTRSTP_TXT:
+	DB	CR,LF,'*** Ctrl-C pressed.',CR,LF
+	DB	'*** Aborted.',CR,LF,EOF
+;
+;
+;*** CARTRIDGE STATUS1(for data-read)
+ROM_TYPE:
+	DS	1	;(0=NORMAL,1=NON-SCC,2=SCC,3=ASC8K,4=ASC16K,5=ETC
+			; 6=shin10bai[GAME MASTER2],
+			; 0FFH=not exist)
+ROM_BANK_SIZ:
+	DS	2	;8K(2000H) or 16K(4000H)
+ROM_STR_ADDR:
+	DS	2
+ROM_END_ADDR:
+	DS	2
+ROM_BANK_REG:
+	DS	2
+;
+;*** CARTRIDGE STATUS2(for compare)
+CMP_STR_ADDR:
+	DS	2
+CMP_END_ADDR:
+	DS	2
+CMP_BANK_REG:
+	DS	2
+;
+;
+OPTION_DUMP:
+	DS	1	;解析モード(0=OFF,1=ON)
+NOW_BANKNO:
+	DS	1	;今見ているバンク番号
+MAX_BANK_FRG:
+	DS	1	;ROMチェック終了フラグ(0=調査中、1=ROM調査終了)
+;
+ROM_FIRST_BANK:
+	DS	1	;ROMの最初のバンク（0）
+ROM_LAST_BANK:
+	DS	1	;ROMの最後のバンク
+;
+SRAM_FIRST_BANK:
+	DS	1	;最初にSRAMが出てくるバンク(0=not found)
+SRAM_LAST_BANK:
+	DS	1	;SRAMの最後のバンク
+SRM_CHK_FRG:
+	DS	1	;(0=SRAM check stop,1=check next bank)
+			;※SRAMがバンク容量より小さければ検索を打ち切る
+;
+SRM_SIZ:
+	DS	1	;(0=none,1=1K,2=2K,3=4K,4=8K,5=16K)
+			;※複数バンクに跨がる場合はさらに検索
+;
+PG0_FLAG:
+	DS	1	;(0=ROM not exists in page0,1=ROM exists in page0)
+;
+BOOTADDR:
+	DS	2	;warm-boot address
+;
+;
+;
+;*MES2:	DB	CR,CR,LF,'  Complete.',CR,CR,LF,EOF
+;
+
+;*MES3:	DB	'** SLOT CHANGED.',CR,LF,EOF
+;*MES4:	DB	'** START.',CR,LF,EOF
+PG0CHK_TXT:
+	DB	'** page-0 check START.',CR,LF,EOF
+
+NONSCC_TXT:
+	DB	' *** KOMAMI(non-scc) type.',CR,LF,EOF
+SCC_TXT:
+	DB	' *** KONAMI(SCC) type.',CR,LF,EOF
+SHIN10_TXT:
+	DB	' *** KONAMI(Shin-10bai/Game Master2) type.',CR,LF,EOF
+ASC8_TXT:
+	DB	' *** ASCII(8K) type.',CR,LF,EOF
+ASC16_TXT:
+	DB	' *** ASCII(16K) type.',CR,LF,EOF
+R_TYPE_TXT:
+	DB	' *** R-TYPE(16K) type.',CR,LF,EOF
+HURRYFOX_TXT:
+	DB	' *** Hurry-fox(16K) type.',CR,LF,EOF
+CROSSBLAIM_TXT:
+	DB	' *** CROSS-BLAIM(16K) type.',CR,LF,EOF
+HALNOTE_TXT:
+	DB	' *** HALNOTE(8K) type.',CR,LF,EOF
+
+NORMAL_TXT:
+	DB	' *** NORMAL-ROM type.',CR,LF,EOF
+PG0_ROM_TXT:
+	DB	' *** NORMAL-ROM(with page 0) type.',CR,LF,EOF
+NOT_ROM_TXT:
+	DB	' *** ROM not exist.',CR,LF,EOF
+END_TXT:
+	DB	'** COMPLETE.',CR,LF,EOF
+ROM_EXT_TXT:
+	DS	3	;ROMファイルの拡張子
+;
+;
+CART_WORK:
+	DS	COMP_BYTES
+CART_WORK2:
+	DS	COMP_BYTES
+;
+;
+;
+;*** MAIN PROGRAM TRANSFER TO PAGE-3
+;
+MAIN2:
+	LD	DE,PAGE3_START
+	LD	HL,START_ADDR
+	LD	BC,END_ADDR - START_ADDR + 1
+	LDIR
+;
+	JP	PAGE3_START
+;
+DUMP_OPT_TXT:
+	DB	'* DUMP OPTION ON.',CR,LF,EOF
+;
+;
+START_ADDR:
+	.PHASE	0C000H
+;
+	LD	A,(OPTION_DUMP_FRG)
+	OR	A
+	JP	Z,START_JP1
+;
+	LD	DE,DUMP_OPT_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,1
+	LD	(OPTION_DUMP),A
+;
+;
+START_JP1:
+	LD	HL,FCB1+9	;ROMファイル拡張子退避
+	LD	DE,ROM_EXT_TXT
+	LD	BC,3
+	LDIR
+;
+	LD	HL,(WARM_BOOT)
+	LD	(BOOTADDR),HL
+;
+	LD	HL,CTR_STOP
+	LD	(WARM_BOOT),HL
+;
+;
+;*	LD	DE,MES4		;***START.
+;*	LD	C,09H
+;*	CALL	MSXDOS
+;
+	DI
+;
+	CALL	CHGSLT
+	CALL	ROMTYPE_CHK
+;
+	LD	A,(ROM_TYPE)
+	CP	NOT_EXIST
+	JP	Z,CHECK_END7	;return to MSX-DOS
+;
+	CALL	FILE_OPEN	;rom file create
+	JP	C,CHECK_END
+;
+	LD	A,(ROM_TYPE)
+	CP	NORMAL_ROM
+	JR	NZ,START_JP2	;MEGA-ROM
+;
+	CALL	SEARCH_NML_ROM
+;
+;
+;ROMアドレス表示（暫定）
+	LD	HL,(ROM_STR_ADDR)
+	CALL	PUT_16BIT_NUM
+;
+	LD	DE,BAR_TXT
+	LD	C,09H
+	CALL	MSXDOS
+
+	LD	HL,(ROM_END_ADDR)
+	CALL	PUT_16BIT_NUM
+
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;----
+;
+	CALL	SAVE_NML_ROM	;rom image save
+;
+	LD	DE,DUMMY_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	CALL	FILE_CLOSE
+;
+	JP	CHECK_END5	;end7ならdosに戻る
+DUMMY_TXT:
+	DB	'rom search completed.',CR,LF,EOF
+BAR_TXT:
+	DB	' - ',EOF
+;
+;
+START_JP2:
+;*	CP	NOT_EXIST	;not exist
+;*	JP	Z,CHECK_END6
+;
+	LD	A,(ROM_TYPE)
+	CP	HURRYFOX_ROM
+	JP	Z,HURRYFOX_JP	;「はーりぃふぉっくす雪の魔王編」
+;
+	CP	CROSSBLAIM_ROM
+	JP	Z,CROSSBLAIM_JP	;「クロスブレイム」
+;
+;
+	XOR	A
+	LD	(ROM_FIRST_BANK),A
+;
+	CALL	CHK_BANKNUM	;MEGA-ROM bank check
+;
+	LD	A,(ROM_TYPE)
+	CP	SHIN10_ROM
+	JR	NZ,START_JP2_1
+;
+	LD	A,0FH
+	LD	(ROM_LAST_BANK),A	;新10倍は強制的に1Mbitとする
+;
+	LD	A,SHIN10_SRAM		;SRAMも新10倍仕様にする
+	LD	(SRM_SIZ),A
+;
+	JR	START_JP3
+;
+START_JP2_1:
+	CP	RTYPE_ROM
+	JR	NZ,START_JP3
+;
+	LD	A,1FH			;R-TYPEは強制的に4Mbit
+	LD	(ROM_LAST_BANK),A
+;
+;
+;*** put cartridge information
+;
+START_JP3:
+	LD	DE,ROM_BANK_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,(ROM_FIRST_BANK)
+	CALL	PUT_8BIT_NUM
+;
+	LD	DE,ROM_BANK_TXT2
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,(ROM_LAST_BANK)
+	CALL	PUT_8BIT_NUM
+;
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+;*** sram
+	LD	A,(SRM_SIZ)
+	OR	A
+	JR	Z,CHECK_END3
+;
+	LD	DE,SRAM_BANK_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,(SRM_SIZ)
+	CP	SHIN10_SRAM	;新10倍のみ特殊メッセージ
+	JR	Z,SRAM_SHIN10
+;
+	LD	A,(SRAM_FIRST_BANK)
+	CALL	PUT_8BIT_NUM
+;
+	LD	A,(SRAM_FIRST_BANK)
+	LD	B,A
+	LD	A,(SRAM_LAST_BANK)
+	CP	B
+	JR	Z,SRAM_1BANK
+;
+;
+;*** sram(multi banks)
+	LD	DE,ROM_BANK_TXT2
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	A,(SRAM_LAST_BANK)
+	CALL	PUT_8BIT_NUM
+;
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	JR	CHECK_END2
+;
+;
+;*** sram(1bank)
+SRAM_1BANK:
+	LD	A,(SRM_SIZ)
+	CP	S1K_SRAM
+	JR	NZ,SRAM_JP2
+	LD	DE,SRAM_1K_TXT
+	JR	SRAM_JPE
+SRAM_JP2:
+	CP	S2K_SRAM
+	JR	NZ,SRAM_JP3
+	LD	DE,SRAM_2K_TXT
+	JR	SRAM_JPE
+SRAM_JP3:
+	CP	S4K_SRAM
+	JR	NZ,SRAM_JP4
+	LD	DE,SRAM_4K_TXT
+	JR	SRAM_JPE
+SRAM_JP4:
+	LD	DE,SRAM_8K_TXT
+;
+SRAM_JPE:
+	LD	C,09H
+	CALL	MSXDOS
+;
+	LD	DE,PUT8BIT_CRLF
+	LD	C,09H
+	CALL	MSXDOS
+;
+	JR	CHECK_END2
+;
+SRAM_SHIN10:
+	LD	DE,SRAM_SHIN10_TXT
+;
+	JR	SRAM_JPE
+;
+;
+CHECK_END3:
+	LD	DE,SRAM_NOT_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	JR	CHECK_END2
+;
+;
+HURRYFOX_JP:		;「はーりぃふぉっくす雪の魔王編」はここに飛ぶ
+CROSSBLAIM_JP:
+;
+CHECK_END2:
+;*	CALL	FILE_OPEN	;rom file create
+;*	JR	C,CHECK_END
+;
+	CALL	ROM_IMG_SAVE	;MEGA-ROM image save
+	CALL	FILE_CLOSE
+	OR	A
+	JR	NZ,CHECK_END6	;NZ=error
+;
+;
+	LD	A,(ROM_TYPE)
+	CP	SHIN10_ROM
+	JR	NZ,CHECK_END4
+;
+	CALL	SHIN10_SRAM_SAVE;新10倍SRAMセーブ
+	JR	CHECK_END_4_1
+;
+CHECK_END4:
+	LD	A,(SRM_SIZ)
+	OR	A
+	JR	Z,CHECK_END5	;no SRAM
+;
+	CALL	SRAM_IMG_SAVE
+;
+CHECK_END_4_1:
+	JR	NC,CHECK_END5
+;
+;
+CHECK_END:
+	LD	C,09H
+	CALL	MSXDOS		;put error message
+;
+	JR	CHECK_END6
+;
+;
+CHECK_END5:
+	CALL	PUT_INFO_FILE
+;
+	LD	A,(ROM_TYPE)
+	CP	NORMAL_ROM
+	JR	Z,CHECK_END7
+;
+CHECK_END6:
+	CALL	CHGSLT
+	CALL	RET_BANK
+;
+CHECK_END7:
+	CALL	RETRAM
+	LD	HL,(BOOTADDR)
+	LD	(WARM_BOOT),HL
+;
+	LD	DE,END_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET			;return to MSX-DOS
+;
+;
+ROM_BANK_TXT:
+	DB	' *** ROM BANK : ',EOF
+ROM_BANK_TXT2:
+	DB	'- ',EOF
+SRAM_BANK_TXT:
+	DB	' *** SRAM BANK : ',EOF
+SRAM_1K_TXT:
+	DB	'(1KB)',EOF
+SRAM_2K_TXT:
+	DB	'(2KB)',EOF
+SRAM_4K_TXT:
+	DB	'(4KB)',EOF
+SRAM_8K_TXT:
+	DB	'(8KB)',EOF
+SRAM_SHIN10_TXT:
+	DB	'(8KB[KONAMI])',EOF
+SRAM_NOT_TXT:
+	DB	' *** SRAM : NOT FOUND.',CR,LF,EOF
+;
+
+;
+;save normal ROM image to disk
+;
+SAVE_NML_ROM:
+	CALL	RETRAM
+;
+	XOR	A
+	LD	(PAGE1_ONLY_FLG),A
+;
+;
+	LD	DE,PAGE2_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	LD	HL,(ROM_STR_ADDR)
+	LD	BC,0000H
+	OR	A
+	SBC	HL,BC
+	JR	NZ,SAVE_NML_JP1
+;
+;*	LD	A,(PG0_FLAG)
+;*	OR	A
+;*	JR	Z,SAVE_NML_JP1
+;
+	DI
+;
+;	***ここはページ0に置けない
+;
+	CALL	PG0_CHGSLT	;page 0 : SLOT#1
+;
+	LD	HL,0000H
+	LD	DE,PAGE2_START
+	LD	BC,4000H
+	LDIR			;copy page 0 to page 2
+;
+	CALL	PG0_RETRAM	;page 0 : main-RAM
+;
+;	***ここまで
+;
+	LD	DE,FCB1
+	LD	HL,4000H
+	LD	C,26H		;page 0 image save
+	CALL	MSXDOS
+	OR	A
+	JP	NZ,SAVE_NML_ERR
+;
+;
+SAVE_NML_JP1:
+	DI
+;
+	LD	HL,(ROM_STR_ADDR)
+	LD	BC,PAGE2_START
+	OR	A
+	SBC	HL,BC
+	JR	Z,SAVE_NML_JP2
+;
+	LD	A,1
+	LD	HL,1*SIX_SHIFT	;page 1 : SLOT #1
+	CALL	ENASLT
+;
+	LD	HL,PAGE1_START
+	LD	DE,PAGE2_START
+	LD	BC,4000H
+	LDIR			;page 1 to page 2
+;
+	LD	A,(PG1RAM)
+	LD	HL,1*SIX_SHIFT	;page 1 : main-RAM
+	CALL	ENASLT
+;
+	LD	HL,(ROM_END_ADDR)
+	LD	BC,8000H
+	OR	A
+	SBC	HL,BC
+	JR	NC,SAVE_NML_JP3	;ROM_END > 8000H?
+;
+	;ROM = 4K or 8K or 16K
+	LD	HL,(ROM_END_ADDR)
+	LD	BC,4000H
+	OR	A
+	SBC	HL,BC
+	INC	HL
+;
+	LD	A,1
+	LD	(PAGE1_ONLY_FLG),A
+;
+	JR	SAVE_NML_JP4
+;
+SAVE_NML_JP3:
+	LD	HL,4000H
+
+SAVE_NML_JP4:
+	LD	DE,FCB1
+	LD	C,26H		;page 1 image save
+	CALL	MSXDOS
+	OR	A
+	JP	NZ,SAVE_NML_ERR
+;
+	LD	A,(PAGE1_ONLY_FLG)
+	OR	A
+	RET	NZ
+;
+
+SAVE_NML_JP2:			;save from 8000H-
+;**	CALL	RETRAM		;念のため
+;
+	LD	DE,PAGE1_START
+	LD	C,1AH
+	CALL	MSXDOS
+;
+	DI
+;
+	LD	A,1
+	LD	HL,2*SIX_SHIFT	;page 2 : SLOT #1
+	CALL	ENASLT
+;
+	LD	HL,PAGE2_START
+	LD	DE,PAGE1_START
+	LD	BC,4000H
+	LDIR			;page 2 to page 1
+;
+	LD	A,(PG2RAM)
+	LD	HL,2*SIX_SHIFT	;page 2 : main-RAM
+	CALL	ENASLT
+;
+	LD	HL,(ROM_END_ADDR)
+	LD	BC,8000H	;page 2 to END
+	OR	A
+	SBC	HL,BC
+	INC	HL
+;
+	LD	DE,FCB1
+	LD	C,26H		;page 2 image save
+	CALL	MSXDOS
+	OR	A
+	JR	NZ,SAVE_NML_ERR
+;
+	RET
+;
+;
+PAGE1_ONLY_FLG:
+	DS	1	;ROMがページ1のみなら1
+;
+SAVE_NML_ERR:
+	LD	DE,SAVE_NML_ERR_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	SCF		;error
+;
+	RET
+;
+SAVE_NML_ERR_TXT:
+	DB	'***normal ROM save error.',CR,LF,EOF
+;
+;
+;search normal ROM image address
+;
+SEARCH_NML_ROM:
+	XOR	A
+	LD	(ROM_8K_FLAG),A
+;
+	LD	HL,4000H	;page1 search
+	LD	BC,4000H
+;
+SEARCH_NML_LOOP1:
+	LD	A,(HL)
+	OR	A
+	JR	Z,SEARCH_NML_JP1
+	CP	0FFH
+	JR	NZ,SER_PAGE1_FOUND
+
+SEARCH_NML_JP1:
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,SEARCH_NML_LOOP1
+;
+	;no data in page1
+	LD	HL,0000H
+	LD	(ROM_STR_ADDR),HL
+	JR	SER_PAGE2_SEARCH
+;
+SER_PAGE1_FOUND:
+	LD	HL,4000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	BC,2000H
+	CALL	GST_IMG_SER		;8K or 16K?
+	JR	NC,SER_32K_ROM
+;
+	LD	HL,7FFFH
+	LD	(ROM_END_ADDR),HL	;page1-16K
+;
+	JR	SER_PAGE2_SEARCH
+;
+;
+SER_32K_ROM:		;32Kを8Kに偽装していないか
+	LD	A,1
+	LD	(ROM_8K_FLAG),A
+;
+	LD	BC,8000H
+	CALL	GST_IMG_SER
+	JR	C,SER_PAGE2_SEARCH
+;
+SER_PG1_8K_ROM:				;page1-8K
+	LD	HL,5FFFH
+	LD	(ROM_END_ADDR),HL
+;
+	RET
+;
+;
+SER_PAGE2_SEARCH:
+	LD	HL,8000H	;page2 search
+	LD	BC,4000H
+;
+SEARCH_NML_LOOP2:
+	LD	A,(HL)
+	OR	A
+	JR	Z,SEARCH_NML_JP2
+	CP	0FFH
+	JR	NZ,SER_PAGE2_FOUND
+;
+SEARCH_NML_JP2:
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	A
+	JR	NZ,SEARCH_NML_LOOP2
+;
+	;no data in page2
+	LD	HL,(ROM_STR_ADDR)
+	LD	A,H
+	OR	L
+	JR	Z,SER_ERROR	;page1-2 no data
+;
+	LD	A,(ROM_8K_FLAG)
+	OR	A
+	JR	Z,SEARCH_NML_JP3
+;
+	LD	HL,5FFFH	;page1-8K
+	JR	SEARCH_NML_JP4
+;
+SEARCH_NML_JP3:
+	LD	HL,7FFFH	;page 1 only
+SEARCH_NML_JP4:
+	LD	(ROM_END_ADDR),HL
+;
+	RET
+;
+;
+SER_PAGE2_FOUND:
+	LD	HL,(ROM_STR_ADDR)
+	LD	A,H
+	OR	L
+	JR	Z,SER_PAGE2_ONLY	;only on page2
+;
+	;data on page 1-2
+	LD	HL,0BFFFH
+	LD	(ROM_END_ADDR),HL	;32KB-ROM
+;
+	LD	BC,4000H		;page1-2 ,and 16K?
+	CALL	GST_IMG_SER
+	JR	C,SER_PAGE0
+;
+	;page1 = page2
+	LD	A,(4003H)
+	CP	80H
+	JR	Z,SER_PAGE2_START
+;
+	LD	HL,4000H		;only on page1(16K)
+	LD	(ROM_STR_ADDR),HL
+	LD	HL,7FFFH
+	LD	(ROM_END_ADDR),HL
+;
+	RET
+;
+;
+SER_PAGE2_START:
+	LD	HL,8000H		;only on page2(16K)
+	LD	(ROM_STR_ADDR),HL
+;
+	RET
+
+;
+SER_PAGE0:
+	;ここは保存時にPG0_FLAGを見ればいいので要らないかも
+;
+	LD	A,(PG0_FLAG)
+	OR	A
+	RET	Z
+;
+	LD	HL,0000H		;48K-ROM
+	LD	(ROM_STR_ADDR),HL
+;
+	RET
+;
+;
+SER_PAGE2_ONLY:
+	LD	HL,8000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	BC,2000H
+	CALL	GST_IMG_SER	;8K or 16K?
+	JR	NC,PG2_8K_ROM
+;
+	LD	HL,0BFFFH
+	LD	(ROM_END_ADDR),HL
+;
+	RET
+;
+PG2_8K_ROM:
+	LD	HL,9FFFH		;page2-8K
+	LD	(ROM_END_ADDR),HL
+;
+	RET
+;
+;
+SER_ERROR:	;ここには来るはずがない
+	LD	DE,SER_ERR_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+;
+SER_ERR_TXT:
+	DB	'***ROM data nothing!',CR,LF,EOF
+;
+ROM_8K_FLAG:
+	DS	1	;8KB-ROMの可能性があれば1
+			;(ページ1の前半と後半が同一）
+
+;
+;***このサブルーチンはページ0に置けない
+PG0_CHGSLT:
+	DI
+;
+	IN	A,(0A8H)
+	AND	11111100B
+	OR	00000001B	;page0 = SLOT #1
+	OUT	(0A8H),A
+;
+	RET
+;
+;
+;***このサブルーチンはページ0に置けない
+PG0_RETRAM:
+	DI
+
+	IN	A,(0A8H)
+	AND	11111100B
+	OR	00000011B	;page0 = SLOT #3(main-RAM)
+	OUT	(0A8H),A
+;
+	RET
+;
+;
+;
+;元々ROM判定の最後にあったが、ページ0のチェックを含むのでここに移動した
+NORMAL_ROM_CHK:
+;
+;クロスブレイムのチェック
+	CALL	CROSSBLAIM_CHK
+	JR	NC,HALNOTE_CHK_JP1
+;
+	LD	A,CROSSBLAIM_ROM
+	LD	(ROM_TYPE),A
+;
+;HALNOTEのチェック
+HALNOTE_CHK_JP1:
+	CALL	HALNOTE_CHK
+	JR	NC,NORMAL_CHK_JP1
+;
+	LD	A,HALNOTE_ROM
+	LD	(ROM_TYPE),A
+;
+	RET
+;
+;
+;普通のROM
+NORMAL_CHK_JP1:
+	LD	A,NORMAL_ROM
+	LD	(ROM_TYPE),A
+;
+;*** page 0 check
+;ここはページ0にあってはいけない
+	LD	DE,PG0CHK_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	CALL	PG0_CHGSLT
+;
+	LD	HL,0000H
+	LD	BC,4000H	;page 0
+;
+PG0_ROM_LOOP:
+	LD	A,(HL)
+	OR	A
+	JR	Z,PG0_ROM_JMP
+	CP	0FFH
+	JR	NZ,PG0CHK_1
+;
+PG0_ROM_JMP:
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,PG0_ROM_LOOP
+;
+	XOR	A		;ROM not exists in page0
+	JR	PG0CHK_2
+;
+PG0CHK_1:
+	LD	A,1		;ROM exists in page0
+PG0CHK_2:
+	LD	(PG0_FLAG),A
+;
+	CALL	PG0_RETRAM
+;
+	LD	A,(PG0_FLAG)
+	OR	A
+	JR	Z,PG0CHK_3
+	LD	DE,PG0_ROM_TXT
+	JR	PG0CHK_4
+PG0CHK_3:
+	LD	DE,NORMAL_TXT
+PG0CHK_4:
+	LD	C,09H
+	CALL	MSXDOS
+;
+	RET
+;
+;
+;*** CROSS-BLAIM CHECK
+;CF = 1 : CROSS BLAIM ROM
+;CF = 0 : normal ROM
+;
+CROSSBLAIM_CHK:
+	XOR	A
+	LD	(8000H),A
+;
+	LD	HL,8000H
+	LD	DE,CART_WORK
+	LD	BC,COMP_BYTES
+	LDIR
+;
+	LD	A,2	;バンク0と1は同一だが、2以降は異なる
+	LD	(8000H),A
+;
+	LD	HL,8000H
+	LD	DE,CART_WORK2
+	LD	BC,COMP_BYTES
+	LDIR
+;
+	LD	HL,CART_WORK
+	LD	DE,CART_WORK2
+	LD	BC,COMP_BYTES
+;
+CBLAIM_LOOP:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,CBLAIM_TYPE
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,CBLAIM_LOOP
+;
+	OR	A	;not CROSS-BLAIM
+	RET
+;
+;
+CBLAIM_TYPE:
+	LD	A,CROSSBLAIM_ROM	;クロスブレイム
+	LD	(ROM_TYPE),A
+;
+	LD	HL,6000H	;セーブ時には関係ないが、最後の初期化用
+	LD	(ROM_BANK_REG),HL
+	LD	HL,7000H
+	LD	(CMP_BANK_REG),HL
+;
+	XOR	A
+	LD	(ROM_FIRST_BANK),A	;必要ないが念のため
+	LD	(SRAM_FIRST_BANK),A	;こちらも
+;
+	LD	A,3
+	LD	(ROM_LAST_BANK),A
+;
+	LD	DE,CROSSBLAIM_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+;
+	SCF
+	RET
+;
+;
+;*** HALNOTE CHECK
+;CF = 1 : HALNOTE ROM
+;CF = 0 : normal ROM
+
+HALNOTE_CHK:
+	XOR	A
+	LD	(08FFFH),A
+	LD	(0AFFFH),A
+;
+	LD	HL,8000H
+	LD	DE,0A000H
+	LD	BC,2000H
+;
+HALNOTE_LOOP1:			;同じデータかチェック
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,NOT_HALNOTE
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,HALNOTE_LOOP1
+;
+;
+	LD	A,1		;バンクを切り換えて変わったかチェック
+	LD	(08FFFH),A
+;
+	LD	HL,8000H
+	LD	DE,0A000H
+	LD	BC,2000H
+;
+HALNOTE_LOOP2:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,FOUND_HALNOTE
+	INC	DE
+	INC	HL
+	DEC	BC
+	LD	A,C
+	OR	B
+	JR	NZ,HALNOTE_LOOP2
+;
+	JR	NOT_HALNOTE
+;
+;
+FOUND_HALNOTE:
+	LD	A,HALNOTE_ROM
+	LD	(ROM_TYPE),A
+;
+	LD	HL,8000H
+	LD	(ROM_STR_ADDR),HL
+;
+	LD	HL,9FFFH
+	LD	(ROM_END_ADDR),HL
+;
+	LD	HL,8FFFH
+	LD	(ROM_BANK_REG),HL
+;
+	LD	HL,2000H
+	LD	(ROM_BANK_SIZ),HL
+;
+;
+	LD	HL,0A000H
+	LD	(CMP_STR_ADDR),HL
+;
+	LD	HL,0BFFFH
+	LD	(CMP_END_ADDR),HL
+;
+	LD	HL,0AFFFH
+	LD	(CMP_BANK_REG),HL
+;
+	LD	DE,HALNOTE_TXT
+	LD	C,09H
+	CALL	MSXDOS
+;
+	SCF
+	RET
+;
+;
+NOT_HALNOTE:
+	OR	A
+	RET
+;
+;
+	.DEPHASE
+END_ADDR:
+;
+	END
+;
