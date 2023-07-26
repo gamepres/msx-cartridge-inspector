@@ -22,7 +22,7 @@ Docフォルダーにあるmci-doc.txtを参考にしてください。
 ### ライセンス
 これらのコード類はYoshimasa Kusakaにより作成されたソフトウェアであり、使用等に関しては記載されたライセンスに同意したものとします。
 
-ライセンスは三条項BSDライセンスとします。詳細は[LICENSE](https://bitbucket.org/gamepres/msx-cartridge-inspector/src/main/LICENSE)を参考ください。
+ライセンスは三条項BSDライセンスとします。詳細は[LICENSE](https://github.com/gamepres/msx-cartridge-inspector/blob/main/LICENSE)を参考ください。
 
 ### 改版履歴
 2023/1/26
